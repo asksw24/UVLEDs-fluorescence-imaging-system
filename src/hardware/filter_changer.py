@@ -18,10 +18,16 @@ class FilterChangerController:
             self.port = None
 
     def connect(self):
-        if self.port is None: return False
+        if self.port is None:
+            print("エラー: ポートが設定されていません。")
+            return False
         try:
             print(f"{self.port}への接続を試みます...")
             self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
+
+            # ▼▼▼ 接続直後にバッファをクリアする処理を追加 ▼▼▼
+            self.ser.reset_input_buffer()
+
             print("接続に成功しました。")
             return True
         except serial.SerialException as e:
@@ -50,6 +56,8 @@ class FilterChangerController:
             return False
             
         try:
+            self.ser.reset_input_buffer()   
+
             # 取扱説明書p.17のコマンド形式 'Fnnn' + CR/LF
             command = f"F{position}\r\n"
             print(f"コマンド送信: {command.strip()}")
@@ -60,7 +68,7 @@ class FilterChangerController:
             response = self.ser.readline().decode('ascii').strip()
             print(f"応答: {response}")
             
-            if response == "OK":
+            if "OK" in response:
                 print(f"ポジション {position} への移動が完了しました。")
                 return True
             else:
@@ -77,6 +85,9 @@ class FilterChangerController:
             return None
         
         try:
+            # ▼▼▼ 送信前にバッファをクリア ▼▼▼
+            self.ser.reset_input_buffer()
+
             # 取扱説明書p.17の問い合わせ形式 'F?'
             command = "F?\r\n"
             print(f"コマンド送信: {command.strip()}")
@@ -88,14 +99,26 @@ class FilterChangerController:
             response = self.ser.readline().decode('ascii').strip()
             print(f"応答: {response}")
             
-            # 応答 'F' から始まる文字列から数値部分を抽出
-            if response.startswith("F"):
-                position = int(response[1:]) # 'F'の次の文字からを整数に変換
-                print(f"現在のポジションは {position} です。")
-                return position
+           # 'startswith'ではなく、'in'を使って応答に'F'が含まれているかを確認
+            if "F" in response:
+                try:
+                    # 'F'という文字が最初に見つかった場所を探す
+                    f_index = response.find("F")
+                    # その次の文字以降をすべて取り出す
+                    position_str = response[f_index + 1:]
+                    # 取り出した文字列を整数に変換する
+                    position = int(position_str)
+
+                    print(f"現在のポジションは {position} です。")
+                    return position
+                except (ValueError, IndexError):
+                    # 'F'の後が数字でなかった場合のエラー処理
+                    print("エラー: 応答から数値を抽出できませんでした。")
+                    return None
             else:
                 print("エラー: 予期しない応答形式でした。")
                 return None
+            
         except Exception as e:
             print(f"エラー: 問い合わせ中にエラーが発生しました。 {e}")
             return None

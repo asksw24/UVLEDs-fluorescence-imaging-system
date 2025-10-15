@@ -2,17 +2,24 @@ import tkinter as tk
 from tkinter import ttk
 # config_parserをインポートするのを忘れないように
 from src.utils.config_parser import get_config
+from src.hardware.filter_changer import FilterChangerController
+import time
 
 class Application(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title("蛍光分光画像撮影システム")
-        self.geometry("1024x768")
+        self.geometry("1024x768")        
+        
+        # 1. フィルターチェンジャー用の「リモコン」を属性として作成
+        self.fc_controller = FilterChangerController()
 
         # --- 設定ファイルから波長リストを読み込んで保持 ---
         self._load_config()
-
         self.create_widgets()
+
+        # 2. 起動時にデバイスへの接続を試みるメソッドを呼び出す
+        self._connect_devices()
 
     def _load_config(self):
         """起動時に設定ファイルを読み込み、波長リストなどを準備する"""
@@ -73,7 +80,14 @@ class Application(tk.Tk):
         # .iniファイルから読み込んだ情報でボタンを動的に生成
         for i, (pos, wavelength) in enumerate(self.filter_options.items()):
             button_text = f"{pos}: {wavelength}"
-            button = ttk.Button(button_frame, text=button_text, width=12)
+            button = ttk.Button(
+                button_frame,
+                text=button_text,
+                width=12,
+                # commandオプションで、押されたときに呼び出す関数を指定
+                # lambda p=pos: ... は、どのボタン(pos)が押されたかを伝えるための書き方
+                command=lambda p=pos: self._move_filter(p)
+            )
             button.grid(row=i // 4, column=i % 4, padx=5, pady=5)
             
         self.current_pos_label = ttk.Label(manual_frame, text="現在位置: - (自動更新)")
@@ -136,10 +150,13 @@ class Application(tk.Tk):
         ttk.Label(self.preview_frame, text="ここに画像が表示されます", font=("Meiryo UI", 16), anchor="center").pack(expand=True)
 
     def _create_status_widgets(self):
-        # ステータス表示を画像下のフレームに移動
-        ttk.Label(self.status_frame, text="カメラ: ⚪ Disconnected").pack(side="left", padx=10)
-        ttk.Label(self.status_frame, text="フィルター: ⚪ Disconnected").pack(side="left", padx=10)
-        ttk.Label(self.status_frame, text="LED: ⚪ Disconnected").pack(side="left", padx=10)
+        # ▼▼▼ self.xxx_status_label = のように、属性として保持する形に変更 ▼▼▼
+        self.camera_status_label = ttk.Label(self.status_frame, text="カメラ: ⚪ Disconnected")
+        self.camera_status_label.pack(side="left", padx=10)
+        self.filter_status_label = ttk.Label(self.status_frame, text="フィルター: ⚪ Disconnected")
+        self.filter_status_label.pack(side="left", padx=10)
+        self.led_status_label = ttk.Label(self.status_frame, text="LED: ⚪ Disconnected")
+        self.led_status_label.pack(side="left", padx=10)
 
     def _create_log_widgets(self, parent_frame):
         log_text = tk.Text(parent_frame, height=5)
@@ -147,6 +164,38 @@ class Application(tk.Tk):
         log_text.config(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         log_text.pack(side="left", fill="both", expand=True, padx=10, pady=5)
+
+    def _connect_devices(self):
+        """起動時に各デバイスへの接続を試みる"""
+        if self.fc_controller.connect():
+            # 接続成功時、ステータスラベルを緑にする
+            self.filter_status_label.config(text="フィルター: 🟢 Connected")
+            # 現在位置を取得して表示
+            self._get_filter_position()
+        else:
+            # 接続失敗時、ステータスラベルを赤にする
+            self.filter_status_label.config(text="フィルター: 🔴 Disconnected")
+
+    def _move_filter(self, position):
+        """フィルター移動ボタンが押されたときの処理"""
+        pos_int = int(position)
+        if self.fc_controller.move_to(pos_int):
+
+            # ▼▼▼ 物理的な移動が終わるのを2秒間待つ ▼▼▼
+            # 取扱説明書によると最大移動時間は約2秒
+            time.sleep(2)
+
+            # 移動が成功したら、現在位置を自動で更新
+            self._get_filter_position()
+
+    def _get_filter_position(self):
+        """フィルターの現在位置を取得してラベルに表示する"""
+        current_pos = self.fc_controller.get_current_position()
+        if current_pos is not None:
+            # ラベルのテキストを更新
+            self.current_pos_label.config(text=f"現在位置: {current_pos}")
+        else:
+            self.current_pos_label.config(text="現在位置: 取得失敗")
 
 if __name__ == '__main__':
     app = Application()
