@@ -42,6 +42,24 @@ class FilterChangerController:
         else:
             print("INFO: 既に接続が切断されています。")
 
+    def _read_response(self, timeout_sec=2.0):
+        """
+        デバイスからの応答をタイムアウト付きで読み取る。
+        指定時間内に応答（改行コードを含む）がなければNoneを返す。
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout_sec:
+            if self.ser.in_waiting > 0:
+                response = self.ser.readline().decode('ascii').strip()
+                if response: # 空の応答は無視する
+                    print(f"応答: {response}")
+                    return response
+            time.sleep(0.05) # CPU負荷を抑えるための短い待機
+        
+        # タイムアウトした場合
+        print(f"エラー: {timeout_sec}秒以内に応答がありませんでした。")
+        return None
+
     def move_to(self, position: int):
         """
         指定されたポジションにフィルターを移動させる。
@@ -63,12 +81,10 @@ class FilterChangerController:
             print(f"コマンド送信: {command.strip()}")
             self.ser.write(command.encode('ascii'))
             
-            time.sleep(0.5)
-
-            response = self.ser.readline().decode('ascii').strip()
-            print(f"応答: {response}")
+            # 応答が来るまで待機する (移動には時間がかかる可能性があるため、タイムアウトを長めに設定)
+            response = self._read_response(timeout_sec=5.0)
             
-            if "OK" in response:
+            if response and "OK" in response:
                 print(f"ポジション {position} への移動が完了しました。")
                 return True
             else:
@@ -93,30 +109,22 @@ class FilterChangerController:
             print(f"コマンド送信: {command.strip()}")
             self.ser.write(command.encode('ascii'))
             
-            time.sleep(0.2) # 応答を待つための待機時間
-
-            # 応答 'Fxxxx' を待つ
-            response = self.ser.readline().decode('ascii').strip()
-            print(f"応答: {response}")
+            # 応答が来るまで待機する
+            response = self._read_response()
             
-           # 'startswith'ではなく、'in'を使って応答に'F'が含まれているかを確認
-            if "F" in response:
+            if response and "F" in response:
                 try:
-                    # 'F'という文字が最初に見つかった場所を探す
-                    f_index = response.find("F")
-                    # その次の文字以降をすべて取り出す
-                    position_str = response[f_index + 1:]
-                    # 取り出した文字列を整数に変換する
+                    # 応答文字列から'F'で分割し、最後の要素（数値のはず）を取得
+                    position_str = response.strip().split('F')[-1]
                     position = int(position_str)
 
                     print(f"現在のポジションは {position} です。")
                     return position
                 except (ValueError, IndexError):
-                    # 'F'の後が数字でなかった場合のエラー処理
-                    print("エラー: 応答から数値を抽出できませんでした。")
+                    print(f"エラー: 応答 '{response}' から数値を抽出できませんでした。")
                     return None
             else:
-                print("エラー: 予期しない応答形式でした。")
+                print(f"エラー: 応答に 'F' が含まれていませんでした。 (応答: {response})")
                 return None
             
         except Exception as e:
