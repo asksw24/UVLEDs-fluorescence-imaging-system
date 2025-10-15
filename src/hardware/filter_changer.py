@@ -18,10 +18,16 @@ class FilterChangerController:
             self.port = None
 
     def connect(self):
-        if self.port is None: return False
+        if self.port is None:
+            print("エラー: ポートが設定されていません。")
+            return False
         try:
             print(f"{self.port}への接続を試みます...")
             self.ser = serial.Serial(self.port, self.baudrate, timeout=1)
+
+            # ▼▼▼ 接続直後にバッファをクリアする処理を追加 ▼▼▼
+            self.ser.reset_input_buffer()
+
             print("接続に成功しました。")
             return True
         except serial.SerialException as e:
@@ -35,6 +41,24 @@ class FilterChangerController:
             print("接続を切断しました。")
         else:
             print("INFO: 既に接続が切断されています。")
+
+    def _read_response(self, timeout_sec=2.0):
+        """
+        デバイスからの応答をタイムアウト付きで読み取る。
+        指定時間内に応答（改行コードを含む）がなければNoneを返す。
+        """
+        start_time = time.time()
+        while time.time() - start_time < timeout_sec:
+            if self.ser.in_waiting > 0:
+                response = self.ser.readline().decode('ascii').strip()
+                if response: # 空の応答は無視する
+                    print(f"応答: {response}")
+                    return response
+            time.sleep(0.05) # CPU負荷を抑えるための短い待機
+        
+        # タイムアウトした場合
+        print(f"エラー: {timeout_sec}秒以内に応答がありませんでした。")
+        return None
 
     def move_to(self, position: int):
         """
@@ -50,17 +74,17 @@ class FilterChangerController:
             return False
             
         try:
+            self.ser.reset_input_buffer()   
+
             # 取扱説明書p.17のコマンド形式 'Fnnn' + CR/LF
             command = f"F{position}\r\n"
             print(f"コマンド送信: {command.strip()}")
             self.ser.write(command.encode('ascii'))
             
-            time.sleep(0.5)
-
-            response = self.ser.readline().decode('ascii').strip()
-            print(f"応答: {response}")
+            # 応答が来るまで待機する (移動には時間がかかる可能性があるため、タイムアウトを長めに設定)
+            response = self._read_response(timeout_sec=5.0)
             
-            if response == "OK":
+            if response and "OK" in response:
                 print(f"ポジション {position} への移動が完了しました。")
                 return True
             else:
@@ -77,25 +101,32 @@ class FilterChangerController:
             return None
         
         try:
+            # ▼▼▼ 送信前にバッファをクリア ▼▼▼
+            self.ser.reset_input_buffer()
+
             # 取扱説明書p.17の問い合わせ形式 'F?'
             command = "F?\r\n"
             print(f"コマンド送信: {command.strip()}")
             self.ser.write(command.encode('ascii'))
             
-            time.sleep(0.2) # 応答を待つための待機時間
-
-            # 応答 'Fxxxx' を待つ
-            response = self.ser.readline().decode('ascii').strip()
-            print(f"応答: {response}")
+            # 応答が来るまで待機する
+            response = self._read_response()
             
-            # 応答 'F' から始まる文字列から数値部分を抽出
-            if response.startswith("F"):
-                position = int(response[1:]) # 'F'の次の文字からを整数に変換
-                print(f"現在のポジションは {position} です。")
-                return position
+            if response and "F" in response:
+                try:
+                    # 応答文字列から'F'で分割し、最後の要素（数値のはず）を取得
+                    position_str = response.strip().split('F')[-1]
+                    position = int(position_str)
+
+                    print(f"現在のポジションは {position} です。")
+                    return position
+                except (ValueError, IndexError):
+                    print(f"エラー: 応答 '{response}' から数値を抽出できませんでした。")
+                    return None
             else:
-                print("エラー: 予期しない応答形式でした。")
+                print(f"エラー: 応答に 'F' が含まれていませんでした。 (応答: {response})")
                 return None
+            
         except Exception as e:
             print(f"エラー: 問い合わせ中にエラーが発生しました。 {e}")
             return None
