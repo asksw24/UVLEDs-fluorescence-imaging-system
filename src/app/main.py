@@ -110,32 +110,42 @@ class Application(tk.Tk):
         live_check.grid(row=2, column=0, columnspan=2, padx=5, pady=10)
 
     def _populate_auto_tab(self, parent_frame):
+        """「自動撮影」タブを作成"""
         sequence_builder_frame = ttk.Labelframe(parent_frame, text="撮影シーケンス作成")
         sequence_builder_frame.pack(fill="x", padx=10, pady=10)
 
         ttk.Label(sequence_builder_frame, text="励起波長:").grid(row=0, column=0, sticky="e")
-        # .iniファイルから読み込んだLED波長をリストに設定
-        led_combo = ttk.Combobox(sequence_builder_frame, width=15, values=self.led_options)
-        led_combo.grid(row=0, column=1, padx=5, pady=5)
+        self.auto_led_combo = ttk.Combobox(sequence_builder_frame, width=15, values=self.led_options)
+        self.auto_led_combo.grid(row=0, column=1, padx=5, pady=5)
+        # ▼▼▼ 励起波長が選択されたら、フィルターの選択肢を更新するイベントをバインド ▼▼▼
+        self.auto_led_combo.bind("<<ComboboxSelected>>", self._update_filter_options)
+
 
         ttk.Label(sequence_builder_frame, text="放射フィルター:").grid(row=1, column=0, sticky="e")
-        # .iniファイルから読み込んだフィルター波長をリストに設定
-        filter_combo = ttk.Combobox(sequence_builder_frame, width=15, values=list(self.filter_options.values()))
-        filter_combo.grid(row=1, column=1, padx=5, pady=5)
+        self.auto_filter_combo = ttk.Combobox(sequence_builder_frame, width=15, values=list(self.filter_options.values()))
+        self.auto_filter_combo.grid(row=1, column=1, padx=5, pady=5)
         
-        # ... (他の自動撮影ウィジェットは変更なし) ...
-        ttk.Button(sequence_builder_frame, text="▼ リストに追加 ▼").grid(row=2, column=1, pady=5)
+        ttk.Button(
+            sequence_builder_frame, 
+            text="▼ リストに追加 ▼", 
+            command=self._add_to_sequence_list
+        ).grid(row=2, column=1, pady=5)
+
         sequence_list_frame = ttk.Labelframe(parent_frame, text="撮影シーケンスリスト")
-        sequence_list_frame.pack(fill="x", padx=10, pady=10)
+        sequence_list_frame.pack(fill="both", expand=True, padx=10, pady=10) # fillとexpandを調整
         columns = ('led', 'filter')
         self.sequence_tree = ttk.Treeview(sequence_list_frame, columns=columns, show='headings', height=5)
         self.sequence_tree.heading('led', text='励起波長'); self.sequence_tree.heading('filter', text='放射フィルター')
         self.sequence_tree.column('led', width=120); self.sequence_tree.column('filter', width=120)
-        self.sequence_tree.pack(side="left", fill="x", expand=True)
+        scrollbar = ttk.Scrollbar(sequence_list_frame, orient="vertical", command=self.sequence_tree.yview)
+        self.sequence_tree.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+
+        self.sequence_tree.pack(side="left", fill="both", expand=True) # fillとexpandを調整
         list_button_frame = ttk.Frame(sequence_list_frame)
         list_button_frame.pack(side="left", padx=5)
-        ttk.Button(list_button_frame, text="選択を削除").pack(pady=2)
-        ttk.Button(list_button_frame, text="全てクリア").pack(pady=2)
+        ttk.Button(list_button_frame, text="選択を削除", command=self._delete_selected_sequence).pack(pady=2)
+        ttk.Button(list_button_frame, text="全てクリア", command=self._clear_all_sequences).pack(pady=2)
         run_frame = ttk.Labelframe(parent_frame, text="撮影実行")
         run_frame.pack(fill="x", padx=10, pady=10)
         ttk.Label(run_frame, text="露光時間 (ms):").grid(row=0, column=0, padx=5, pady=5, sticky="e")
@@ -159,11 +169,11 @@ class Application(tk.Tk):
         self.led_status_label.pack(side="left", padx=10)
 
     def _create_log_widgets(self, parent_frame):
-        log_text = tk.Text(parent_frame, height=5)
-        scrollbar = ttk.Scrollbar(parent_frame, orient="vertical", command=log_text.yview)
-        log_text.config(yscrollcommand=scrollbar.set)
+        self.log_text = tk.Text(parent_frame, height=5, state="disabled") # ユーザーの入力を無効化
+        scrollbar = ttk.Scrollbar(parent_frame, orient="vertical", command=self.log_text.yview)
+        self.log_text.config(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
-        log_text.pack(side="left", fill="both", expand=True, padx=10, pady=5)
+        self.log_text.pack(side="left", fill="both", expand=True, padx=10, pady=5)
 
     def _connect_devices(self):
         """起動時に各デバイスへの接続を試みる"""
@@ -196,6 +206,90 @@ class Application(tk.Tk):
             self.current_pos_label.config(text=f"現在位置: {current_pos}")
         else:
             self.current_pos_label.config(text="現在位置: 取得失敗")
+
+    def _add_to_sequence_list(self):
+        """選択された波長の組み合わせをシーケンスリストに追加する"""
+        led = self.auto_led_combo.get()
+        filt = self.auto_filter_combo.get()
+
+        if not led or not filt:
+            print("励起波長と放射フィルターの両方を選択してください。")
+            # ここでユーザーに警告メッセージを出すのが親切（将来的に実装）
+            return
+            
+        self.sequence_tree.insert("", "end", values=(led, filt))
+        self.add_log(f"シーケンス追加: LED={led}, Filter={filt}")
+
+    def add_log(self, message):
+        """ログウィジェットにタイムスタンプ付きでメッセージを追加する"""
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+        log_message = f"[{timestamp}] {message}\n"
+        
+        # ウィジェットを一時的に有効化してテキストを挿入
+        self.log_text.config(state="normal")
+        self.log_text.insert("end", log_message)
+        self.log_text.config(state="disabled") # 再び読み取り専用に
+        
+        # 自動で一番下にスクロール
+        self.log_text.see("end")
+
+    def _parse_wavelength(self, wavelength_str):
+        """'365nm'のような文字列から数値部分を抽出する。失敗した場合はNoneを返す。"""
+        try:
+            # 'nm'などの非数値文字をすべて取り除く
+            return int(''.join(filter(str.isdigit, wavelength_str)))
+        except (ValueError, TypeError):
+            return None
+
+    def _update_filter_options(self, event=None):
+        """励起波長の選択に応じて、放射フィルターの選択肢を更新する"""
+        selected_led_str = self.auto_led_combo.get()
+        led_wavelength = self._parse_wavelength(selected_led_str)
+
+        if led_wavelength is None:
+            # 励起波長が不正な場合は、全てのフィルターを選択可能にする
+            valid_filters = list(self.filter_options.values())
+        else:
+            # 励起波長より長い波長のフィルターのみをリストアップ
+            valid_filters = []
+            for pos, filt_str in self.filter_options.items():
+                filt_wavelength = self._parse_wavelength(filt_str)
+                if filt_wavelength is not None and filt_wavelength > led_wavelength:
+                    valid_filters.append(filt_str)
+
+        # 放射フィルターコンボボックスの選択肢を更新
+        self.auto_filter_combo['values'] = valid_filters
+
+        # 現在選択されているフィルターが、新しい選択肢リストにない場合は選択をクリア
+        if self.auto_filter_combo.get() not in valid_filters:
+            self.auto_filter_combo.set('')
+        
+        self.add_log(f"励起波長 {selected_led_str} に応じてフィルターリストを更新しました。")
+
+
+    def _delete_selected_sequence(self):
+        """シーケンスリストで選択されている項目を削除する"""
+        selected_items = self.sequence_tree.selection()
+        if not selected_items:
+            self.add_log("削除するシーケンスが選択されていません。")
+            return
+
+        for item in selected_items:
+            self.sequence_tree.delete(item)
+        
+        self.add_log(f"{len(selected_items)}件のシーケンスを削除しました。")
+
+    def _clear_all_sequences(self):
+        """シーケンスリストの全ての項目を削除する"""
+        all_items = self.sequence_tree.get_children()
+        if not all_items:
+            self.add_log("クリアするシーケンスがありません。")
+            return
+
+        for item in all_items:
+            self.sequence_tree.delete(item)
+        
+        self.add_log("全てのシーケンスをクリアしました。")
 
 if __name__ == '__main__':
     app = Application()
