@@ -53,5 +53,6 @@
   - **Description:** `led_controller.py`を実装し、`settings.ini`の設定に応じて、起動時に`XenonController`と`LedController`のどちらを使うか選択できる仕組みを構築する。
 
 ### v2.0: 画像解析・識別機能の実装 (将来の計画)
-- (将来のIssue)
+- **`feat(analysis): 解析モデルの読み込み機能を実装`**
+- **`feat(gui): 解析結果の可視化機能を実装`**
 
